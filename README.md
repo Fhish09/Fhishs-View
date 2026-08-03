@@ -2,37 +2,34 @@
 
 **Your Windows. Reimagined.**
 
-A premium desktop overlay for Windows 10 and Windows 11, inspired by Apple's Dynamic Island — redesigned for Windows with glassmorphism, spring animations, and intelligent modules.
+A premium desktop overlay for Windows 10/11, inspired by Apple's Dynamic Island — rebuilt in **Python + PyQt6**.
 
-## Features (Planned)
+## Features (in progress)
 
-- **Music Control** — Universal media controls (Spotify, YouTube, VLC, etc.)
-- **Screenshot Center** — Full screen, region, window + OCR
-- **Screen Recording** — Desktop, window, webcam, system audio
-- **Quick Launch** — One-click shortcuts to favorite sites
-- **Smart Search** — Spotlight-style global search
-- **System Controls** — Wi-Fi, Bluetooth, volume, brightness, Focus Mode
-- **AI Assistant** — Summarize, rewrite, translate, code help
-- **Notification Center** — Beautiful blur cards
-- **Clipboard Manager** — History with pin & search
-- **Widgets** — Weather, calendar, system monitors, timers
-- **And more**
+- Floating island at the top center of the screen
+- Collapse / expand with smooth animations
+- Music control panel (UI ready)
+- Smart search panel (UI ready)
+- System controls panel (UI ready)
+- Glass-style dark UI
 
-## Tech Stack
+## Requirements
 
-- Electron
-- React + TypeScript
-- Vite
-- Tailwind CSS
-- Framer Motion
-- Zustand
+- Python 3.10+
+- Windows 10 or 11
 
-## Getting Started
+## Install & Run
 
 ```bash
-npm install
-npm run dev
+pip install -r requirements.txt
+python main.py
 ```
+
+## Controls
+
+- Click the island to expand
+- Click **X** to collapse
+- Drag the island to move it
 
 ## Branding
 
