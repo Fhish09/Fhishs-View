@@ -14,9 +14,6 @@ def main():
     app.setApplicationName("Fhish's View")
     app.setQuitOnLastWindowClosed(True)
 
-    # High DPI support
-    app.setAttribute(Qt.ApplicationAttribute.AA_UseHighDpiPixmaps, True)
-
     window = IslandWindow()
     window.show()
 
