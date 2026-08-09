@@ -1,61 +1,105 @@
 """
 Fhish's View — Premium Windows Dynamic Island overlay.
-Apple-inspired glass island with fluid compact → medium → expanded states.
+Matches the React frontend structure: compact island → expanded panel
+with Menu / Music / Search / System content.
 """
 
 from PyQt6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QGraphicsDropShadowEffect, QFrame, QSlider, QSizePolicy, QGraphicsOpacityEffect
+    QGraphicsDropShadowEffect, QFrame, QSlider, QLineEdit, QGridLayout
 )
 from PyQt6.QtCore import (
-    Qt, QPropertyAnimation, QEasingCurve, QRect, QPoint, QSize,
-    QParallelAnimationGroup, QTimer, pyqtProperty
+    Qt, QPropertyAnimation, QEasingCurve, QRect, QSize
 )
-from PyQt6.QtGui import QColor, QFont, QCursor, QPainter, QPainterPath, QBrush, QPen, QLinearGradient
+from PyQt6.QtGui import QColor, QCursor, QFont
 
 
-# ─── Design tokens (Windows-friendly sizing) ───────────────────────────────────
-COMPACT_W, COMPACT_H = 168, 36
-MEDIUM_W, MEDIUM_H = 340, 48
-EXPANDED_W, EXPANDED_H = 400, 320
-ANIM_MS = 320
+# Sizes aligned with frontend (App.tsx / Island.tsx)
+COMPACT_W, COMPACT_H = 180, 36
+EXPANDED_W, EXPANDED_H = 380, 320
+ANIM_MS = 300
 
-GLASS_BG = "rgba(12, 12, 14, 0.82)"
-GLASS_BORDER = "rgba(255, 255, 255, 0.14)"
+GLASS_BG = "rgba(0, 0, 0, 0.85)"
+GLASS_BORDER = "rgba(255, 255, 255, 0.10)"
 ACCENT = "#0A84FF"
-TEXT_PRIMARY = "rgba(255, 255, 255, 0.95)"
-TEXT_SECONDARY = "rgba(255, 255, 255, 0.55)"
-TEXT_MUTED = "rgba(255, 255, 255, 0.32)"
+TEXT_PRIMARY = "rgba(255, 255, 255, 0.90)"
+TEXT_SECONDARY = "rgba(255, 255, 255, 0.50)"
+TEXT_MUTED = "rgba(255, 255, 255, 0.30)"
 
 
-class GlassFrame(QFrame):
-    """Rounded glass container with soft outer glow."""
+def _logo(size: int = 20, font_size: int = 10) -> QLabel:
+    logo = QLabel("F")
+    logo.setFixedSize(size, size)
+    logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
+    r = size // 2
+    logo.setStyleSheet(f"""
+        background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
+            stop:0 #60A5FA, stop:1 #2563EB);
+        color: white;
+        font-weight: 800;
+        font-size: {font_size}px;
+        border-radius: {r}px;
+    """)
+    return logo
 
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("glass")
-        self.setStyleSheet(f"""
-            #glass {{
-                background: {GLASS_BG};
-                border: 1px solid {GLASS_BORDER};
-                border-radius: 18px;
-            }}
-        """)
-        shadow = QGraphicsDropShadowEffect(self)
-        shadow.setBlurRadius(36)
-        shadow.setOffset(0, 8)
-        shadow.setColor(QColor(0, 0, 0, 140))
-        self.setGraphicsEffect(shadow)
+
+def _close_btn() -> QPushButton:
+    btn = QPushButton("✕")
+    btn.setFixedSize(24, 24)
+    btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+    btn.setStyleSheet("""
+        QPushButton {
+            background: rgba(255,255,255,0.10);
+            color: rgba(255,255,255,0.60);
+            border: none;
+            border-radius: 12px;
+            font-size: 11px;
+        }
+        QPushButton:hover {
+            background: rgba(255,255,255,0.20);
+            color: white;
+        }
+        QPushButton:pressed {
+            background: rgba(255,59,48,0.40);
+            color: white;
+        }
+    """)
+    return btn
+
+
+def _slider(value: int = 50) -> QSlider:
+    s = QSlider(Qt.Orientation.Horizontal)
+    s.setRange(0, 100)
+    s.setValue(value)
+    s.setStyleSheet(f"""
+        QSlider::groove:horizontal {{
+            height: 6px;
+            background: rgba(255,255,255,0.10);
+            border-radius: 3px;
+        }}
+        QSlider::handle:horizontal {{
+            width: 14px;
+            height: 14px;
+            margin: -4px 0;
+            background: white;
+            border-radius: 7px;
+        }}
+        QSlider::sub-page:horizontal {{
+            background: rgba(255,255,255,0.50);
+            border-radius: 3px;
+        }}
+    """)
+    return s
 
 
 class IslandWindow(QWidget):
-    """Floating Dynamic Island for Windows."""
+    """Floating Dynamic Island — matches React frontend behaviour."""
 
     def __init__(self):
         super().__init__()
-        self.mode = "compact"  # compact | medium | music | search | system
+        self.mode = "collapsed"  # collapsed | menu | music | search | system
         self._drag_pos = None
-        self._anim_group = None
+        self._anim = None
 
         self.setWindowFlags(
             Qt.WindowType.FramelessWindowHint
@@ -63,476 +107,521 @@ class IslandWindow(QWidget):
             | Qt.WindowType.Tool
         )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating, False)
 
         self._build_ui()
         self._position_top_center(COMPACT_W, COMPACT_H)
-        self._show_compact()
+        self._apply_mode("collapsed", animate=False)
 
-    # ─── UI construction ───────────────────────────────────────────────────────
+    # ─── Build ─────────────────────────────────────────────────────────────────
 
     def _build_ui(self):
         self.root = QVBoxLayout(self)
         self.root.setContentsMargins(0, 0, 0, 0)
         self.root.setSpacing(0)
 
-        self.glass = GlassFrame()
+        self.glass = QFrame()
+        self.glass.setObjectName("glass")
+        self._set_glass_radius(18)
+        shadow = QGraphicsDropShadowEffect(self.glass)
+        shadow.setBlurRadius(40)
+        shadow.setOffset(0, 8)
+        shadow.setColor(QColor(0, 0, 0, 160))
+        self.glass.setGraphicsEffect(shadow)
+
         self.glass_layout = QVBoxLayout(self.glass)
         self.glass_layout.setContentsMargins(0, 0, 0, 0)
         self.glass_layout.setSpacing(0)
 
-        # Stack of views
+        # Compact island (Island.tsx)
         self.compact_view = self._build_compact()
-        self.medium_view = self._build_medium()
-        self.music_view = self._build_music()
-        self.search_view = self._build_search()
-        self.system_view = self._build_system()
+        self.glass_layout.addWidget(self.compact_view)
 
-        for v in (self.compact_view, self.medium_view, self.music_view,
-                  self.search_view, self.system_view):
-            self.glass_layout.addWidget(v)
-            v.hide()
+        # Expanded shell (ExpandedPanel.tsx) — shared header + content stack
+        self.expanded_shell = QWidget()
+        shell_lay = QVBoxLayout(self.expanded_shell)
+        shell_lay.setContentsMargins(0, 0, 0, 0)
+        shell_lay.setSpacing(0)
+
+        shell_lay.addWidget(self._build_header())
+
+        self.content = QWidget()
+        self.content_lay = QVBoxLayout(self.content)
+        self.content_lay.setContentsMargins(12, 12, 12, 12)
+        self.content_lay.setSpacing(0)
+
+        self.menu_panel = self._build_menu_panel()
+        self.music_panel = self._build_music_panel()
+        self.search_panel = self._build_search_panel()
+        self.system_panel = self._build_system_panel()
+
+        for p in (self.menu_panel, self.music_panel, self.search_panel, self.system_panel):
+            self.content_lay.addWidget(p)
+            p.hide()
+
+        shell_lay.addWidget(self.content)
+        self.glass_layout.addWidget(self.expanded_shell)
+        self.expanded_shell.hide()
 
         self.root.addWidget(self.glass)
 
-    def _build_compact(self) -> QWidget:
-        w = QWidget()
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(10, 0, 12, 0)
-        lay.setSpacing(8)
-
-        # Live indicator dot
-        self.dot = QLabel("●")
-        self.dot.setStyleSheet(f"color: {ACCENT}; font-size: 9px;")
-        self.dot.setFixedWidth(12)
-
-        self.compact_label = QLabel("Fhish's View")
-        self.compact_label.setStyleSheet(
-            f"color: {TEXT_PRIMARY}; font-size: 12px; font-weight: 600; letter-spacing: 0.2px;"
-        )
-
-        lay.addWidget(self.dot)
-        lay.addWidget(self.compact_label)
-        lay.addStretch()
-
-        # Subtle activity hint
-        hint = QLabel("Ready")
-        hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
-        lay.addWidget(hint)
-
-        w.mousePressEvent = self._on_compact_click
-        w.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        return w
-
-    def _build_medium(self) -> QWidget:
-        w = QWidget()
-        lay = QHBoxLayout(w)
-        lay.setContentsMargins(12, 0, 10, 0)
-        lay.setSpacing(10)
-
-        # Logo pill
-        logo = QLabel("F")
-        logo.setFixedSize(28, 28)
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setStyleSheet(f"""
-            background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 #5AC8FA, stop:1 #0A84FF);
-            color: white;
-            font-weight: 800;
-            font-size: 13px;
-            border-radius: 14px;
+    def _set_glass_radius(self, r: int):
+        self.glass.setStyleSheet(f"""
+            #glass {{
+                background: {GLASS_BG};
+                border: 1px solid {GLASS_BORDER};
+                border-radius: {r}px;
+            }}
         """)
 
-        title = QLabel("Fhish's View")
-        title.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 600;")
+    def _build_compact(self) -> QWidget:
+        """Matches Island.tsx — F logo + title."""
+        w = QWidget()
+        lay = QHBoxLayout(w)
+        lay.setContentsMargins(12, 0, 12, 0)
+        lay.setSpacing(8)
+        lay.setAlignment(Qt.AlignmentFlag.AlignCenter)
 
-        lay.addWidget(logo)
+        lay.addWidget(_logo(20, 10))
+
+        title = QLabel("Fhish's View")
+        title.setStyleSheet(
+            "color: rgba(255,255,255,0.70); font-size: 12px; font-weight: 500; letter-spacing: 0.3px;"
+        )
+        lay.addWidget(title)
+
+        w.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        w.mousePressEvent = self._on_compact_click
+        return w
+
+    def _build_header(self) -> QWidget:
+        """Matches ExpandedPanel header."""
+        header = QWidget()
+        header.setFixedHeight(48)
+        lay = QHBoxLayout(header)
+        lay.setContentsMargins(16, 0, 12, 0)
+        lay.setSpacing(8)
+
+        lay.addWidget(_logo(24, 11))
+
+        title = QLabel("Fhish's View")
+        title.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 500;")
         lay.addWidget(title)
         lay.addStretch()
 
-        # Quick action chips
-        for label, mode in [("Music", "music"), ("Search", "search"), ("System", "system")]:
-            btn = QPushButton(label)
-            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            btn.setFixedHeight(26)
-            btn.setStyleSheet(f"""
-                QPushButton {{
-                    background: rgba(255,255,255,0.08);
-                    color: {TEXT_SECONDARY};
-                    border: none;
-                    border-radius: 13px;
-                    padding: 0 12px;
-                    font-size: 11px;
-                    font-weight: 600;
-                }}
-                QPushButton:hover {{
-                    background: rgba(255,255,255,0.16);
-                    color: {TEXT_PRIMARY};
-                }}
-                QPushButton:pressed {{
-                    background: rgba(255,255,255,0.22);
-                }}
-            """)
-            btn.clicked.connect(lambda checked=False, m=mode: self._go(m))
-            lay.addWidget(btn)
-
-        close = self._make_close_btn()
+        close = _close_btn()
         close.clicked.connect(self.collapse)
         lay.addWidget(close)
-        return w
 
-    def _build_music(self) -> QWidget:
+        # Bottom border
+        line = QFrame()
+        line.setFixedHeight(1)
+        line.setStyleSheet("background: rgba(255,255,255,0.05);")
+
+        wrap = QWidget()
+        v = QVBoxLayout(wrap)
+        v.setContentsMargins(0, 0, 0, 0)
+        v.setSpacing(0)
+        v.addWidget(header)
+        v.addWidget(line)
+        return wrap
+
+    def _build_menu_panel(self) -> QWidget:
+        """Matches MenuPanel.tsx."""
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(16, 14, 16, 16)
-        lay.setSpacing(12)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
 
-        # Header
-        header = QHBoxLayout()
-        title = QLabel("Now Playing")
-        title.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 600;")
-        close = self._make_close_btn()
-        close.clicked.connect(lambda: self._go("medium"))
-        header.addWidget(title)
-        header.addStretch()
-        header.addWidget(close)
-        lay.addLayout(header)
+        items = [
+            ("music", "Music", "Now playing controls"),
+            ("search", "Search", "Apps, files, web"),
+            ("system", "System", "Wi-Fi, volume, focus"),
+        ]
+        for mode, label, desc in items:
+            btn = QPushButton()
+            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            btn.setFixedHeight(52)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: rgba(255,255,255,0.05);
+                    border: none;
+                    border-radius: 16px;
+                    text-align: left;
+                    padding: 0 12px;
+                }
+                QPushButton:hover {
+                    background: rgba(255,255,255,0.10);
+                }
+                QPushButton:pressed {
+                    background: rgba(255,255,255,0.14);
+                }
+            """)
+            inner = QHBoxLayout(btn)
+            inner.setContentsMargins(4, 0, 4, 0)
+            inner.setSpacing(12)
+
+            icon = QLabel(label[:2].upper())
+            icon.setFixedSize(36, 36)
+            icon.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            icon.setStyleSheet("""
+                background: rgba(255,255,255,0.10);
+                color: rgba(255,255,255,0.70);
+                border-radius: 12px;
+                font-size: 11px;
+                font-weight: 700;
+            """)
+
+            texts = QVBoxLayout()
+            texts.setSpacing(1)
+            t1 = QLabel(label)
+            t1.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 500; background: transparent;")
+            t2 = QLabel(desc)
+            t2.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; background: transparent;")
+            texts.addWidget(t1)
+            texts.addWidget(t2)
+
+            inner.addWidget(icon)
+            inner.addLayout(texts)
+            inner.addStretch()
+
+            btn.clicked.connect(lambda checked=False, m=mode: self._apply_mode(m))
+            lay.addWidget(btn)
+
+        # Tagline
+        tag = QLabel("Your Windows. Reimagined.")
+        tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        tag.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; margin-top: 10px;")
+        lay.addWidget(tag)
+        lay.addStretch()
+        return w
+
+    def _build_music_panel(self) -> QWidget:
+        """Matches MusicPanel.tsx."""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(14)
 
         # Artwork + meta
         row = QHBoxLayout()
-        row.setSpacing(14)
+        row.setSpacing(12)
 
-        art = QLabel("♪")
-        art.setFixedSize(72, 72)
-        art.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        art.setStyleSheet(f"""
+        art = QLabel("")
+        art.setFixedSize(56, 56)
+        art.setStyleSheet("""
             background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                stop:0 #1C1C1E, stop:1 #2C2C2E);
-            color: {ACCENT};
-            font-size: 28px;
-            border-radius: 14px;
-            border: 1px solid rgba(255,255,255,0.08);
+                stop:0 #A855F7, stop:1 #EC4899);
+            border-radius: 12px;
         """)
 
         meta = QVBoxLayout()
         meta.setSpacing(2)
-        song = QLabel("Blinding Lights")
-        song.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 15px; font-weight: 600;")
-        artist = QLabel("The Weeknd")
-        artist.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
+        song = QLabel("No media playing")
+        song.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 500;")
+        artist = QLabel("Open Spotify, YouTube, or VLC")
+        artist.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
         meta.addWidget(song)
         meta.addWidget(artist)
         meta.addStretch()
-
-        # Equalizer dots (visual only)
-        eq = QHBoxLayout()
-        eq.setSpacing(3)
-        for h in (10, 16, 8, 14, 6):
-            bar = QFrame()
-            bar.setFixedSize(3, h)
-            bar.setStyleSheet(f"background: {ACCENT}; border-radius: 1px;")
-            eq.addWidget(bar, alignment=Qt.AlignmentFlag.AlignBottom)
-        meta.addLayout(eq)
 
         row.addWidget(art)
         row.addLayout(meta)
         lay.addLayout(row)
 
-        # Progress
-        progress = QSlider(Qt.Orientation.Horizontal)
-        progress.setRange(0, 100)
-        progress.setValue(38)
-        progress.setStyleSheet(f"""
-            QSlider::groove:horizontal {{
-                height: 4px;
-                background: rgba(255,255,255,0.12);
-                border-radius: 2px;
-            }}
-            QSlider::handle:horizontal {{
-                width: 12px;
-                height: 12px;
-                margin: -4px 0;
-                background: white;
-                border-radius: 6px;
-            }}
-            QSlider::sub-page:horizontal {{
-                background: {ACCENT};
-                border-radius: 2px;
-            }}
+        # Progress bar (visual)
+        progress = QFrame()
+        progress.setFixedHeight(4)
+        progress.setStyleSheet("""
+            background: rgba(255,255,255,0.10);
+            border-radius: 2px;
         """)
         lay.addWidget(progress)
 
-        times = QHBoxLayout()
-        t1 = QLabel("1:24")
-        t1.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
-        t2 = QLabel("-2:18")
-        t2.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
-        times.addWidget(t1)
-        times.addStretch()
-        times.addWidget(t2)
-        lay.addLayout(times)
-
         # Controls
         controls = QHBoxLayout()
-        controls.setSpacing(20)
+        controls.setSpacing(24)
         controls.addStretch()
-        for symbol in ("⏮", "▶", "⏭"):
-            b = QPushButton(symbol)
-            b.setFixedSize(40, 40)
+
+        for text, primary in [("Prev", False), ("Play", True), ("Next", False)]:
+            b = QPushButton(text)
             b.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            b.setStyleSheet(f"""
-                QPushButton {{
-                    background: rgba(255,255,255,0.08);
-                    color: {TEXT_PRIMARY};
-                    border: none;
-                    border-radius: 20px;
-                    font-size: 14px;
-                }}
-                QPushButton:hover {{
-                    background: rgba(255,255,255,0.16);
-                }}
-                QPushButton:pressed {{
-                    background: rgba(255,255,255,0.24);
-                }}
-            """)
+            if primary:
+                b.setFixedSize(40, 40)
+                b.setStyleSheet("""
+                    QPushButton {
+                        background: rgba(255,255,255,0.15);
+                        color: white;
+                        border: none;
+                        border-radius: 20px;
+                        font-size: 12px;
+                        font-weight: 500;
+                    }
+                    QPushButton:hover { background: rgba(255,255,255,0.25); }
+                    QPushButton:pressed { background: rgba(255,255,255,0.30); }
+                """)
+            else:
+                b.setStyleSheet("""
+                    QPushButton {
+                        background: transparent;
+                        color: rgba(255,255,255,0.50);
+                        border: none;
+                        font-size: 12px;
+                    }
+                    QPushButton:hover { color: rgba(255,255,255,0.80); }
+                """)
             controls.addWidget(b)
+
         controls.addStretch()
         lay.addLayout(controls)
 
-        return w
-
-    def _build_search(self) -> QWidget:
-        w = QWidget()
-        lay = QVBoxLayout(w)
-        lay.setContentsMargins(16, 14, 16, 16)
-        lay.setSpacing(12)
-
-        header = QHBoxLayout()
-        title = QLabel("Search")
-        title.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 600;")
-        close = self._make_close_btn()
-        close.clicked.connect(lambda: self._go("medium"))
-        header.addWidget(title)
-        header.addStretch()
-        header.addWidget(close)
-        lay.addLayout(header)
-
-        # Fake search field
-        field = QLabel("  Search apps, files, web…")
-        field.setFixedHeight(40)
-        field.setStyleSheet(f"""
-            background: rgba(255,255,255,0.06);
-            color: {TEXT_MUTED};
-            border: 1px solid rgba(255,255,255,0.08);
-            border-radius: 12px;
-            font-size: 13px;
-            padding-left: 8px;
+        # Back to menu
+        back = QPushButton("←  Menu")
+        back.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        back.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {TEXT_MUTED};
+                border: none;
+                font-size: 11px;
+                text-align: left;
+            }}
+            QPushButton:hover {{ color: {TEXT_SECONDARY}; }}
         """)
-        lay.addWidget(field)
-
-        for icon, label in [("📁", "Documents"), ("🌐", "Web"), ("⚙️", "Settings")]:
-            row = QHBoxLayout()
-            i = QLabel(icon)
-            i.setFixedWidth(28)
-            t = QLabel(label)
-            t.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 13px;")
-            row.addWidget(i)
-            row.addWidget(t)
-            row.addStretch()
-            lay.addLayout(row)
-
+        back.clicked.connect(lambda: self._apply_mode("menu"))
+        lay.addWidget(back)
         lay.addStretch()
         return w
 
-    def _build_system(self) -> QWidget:
+    def _build_search_panel(self) -> QWidget:
+        """Matches SearchPanel.tsx — real editable input."""
         w = QWidget()
         lay = QVBoxLayout(w)
-        lay.setContentsMargins(16, 14, 16, 16)
+        lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(12)
 
-        header = QHBoxLayout()
-        title = QLabel("System")
-        title.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 600;")
-        close = self._make_close_btn()
-        close.clicked.connect(lambda: self._go("medium"))
-        header.addWidget(title)
-        header.addStretch()
-        header.addWidget(close)
-        lay.addLayout(header)
+        self.search_input = QLineEdit()
+        self.search_input.setPlaceholderText("Search apps, files, web...")
+        self.search_input.setFixedHeight(40)
+        self.search_input.setStyleSheet("""
+            QLineEdit {
+                background: rgba(255,255,255,0.10);
+                border: 1px solid rgba(255,255,255,0.10);
+                border-radius: 12px;
+                color: white;
+                font-size: 13px;
+                padding: 0 14px;
+            }
+            QLineEdit:focus {
+                border: 1px solid rgba(255,255,255,0.25);
+            }
+        """)
+        self.search_input.returnPressed.connect(self._on_search)
+        lay.addWidget(self.search_input)
+
+        self.search_hint = QLabel("Start typing to search")
+        self.search_hint.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.search_hint.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px; padding: 16px 0;")
+        lay.addWidget(self.search_hint)
+
+        self.search_input.textChanged.connect(self._on_search_text)
+
+        back = QPushButton("←  Menu")
+        back.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        back.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {TEXT_MUTED};
+                border: none;
+                font-size: 11px;
+                text-align: left;
+            }}
+            QPushButton:hover {{ color: {TEXT_SECONDARY}; }}
+        """)
+        back.clicked.connect(lambda: self._apply_mode("menu"))
+        lay.addWidget(back)
+        lay.addStretch()
+        return w
+
+    def _build_system_panel(self) -> QWidget:
+        """Matches SystemPanel.tsx — 2×2 toggles + volume + brightness."""
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(12)
+
+        grid = QGridLayout()
+        grid.setSpacing(8)
+
+        controls = [
+            ("Wi-Fi", True),
+            ("Bluetooth", False),
+            ("Focus", False),
+            ("Night Light", False),
+        ]
+        self.toggle_btns = {}
+        for i, (label, active) in enumerate(controls):
+            btn = QPushButton()
+            btn.setCheckable(True)
+            btn.setChecked(active)
+            btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+            btn.setFixedHeight(56)
+            btn.setStyleSheet("""
+                QPushButton {
+                    background: rgba(255,255,255,0.05);
+                    border: 1px solid rgba(255,255,255,0.05);
+                    border-radius: 16px;
+                    text-align: left;
+                    padding: 8px 12px;
+                }
+                QPushButton:checked {
+                    background: rgba(59, 130, 246, 0.30);
+                    border: 1px solid rgba(96, 165, 250, 0.30);
+                }
+                QPushButton:hover {
+                    background: rgba(255,255,255,0.10);
+                }
+                QPushButton:checked:hover {
+                    background: rgba(59, 130, 246, 0.40);
+                }
+            """)
+
+            # Label + status inside button
+            inner = QVBoxLayout(btn)
+            inner.setContentsMargins(4, 2, 4, 2)
+            inner.setSpacing(2)
+            t1 = QLabel(label)
+            t1.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 500; background: transparent;")
+            t2 = QLabel("On" if active else "Off")
+            t2.setObjectName("status")
+            t2.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; background: transparent;")
+            inner.addWidget(t1)
+            inner.addWidget(t2)
+
+            btn.toggled.connect(lambda checked, b=btn: self._update_toggle_status(b, checked))
+            self.toggle_btns[label] = btn
+            grid.addWidget(btn, i // 2, i % 2)
+
+        lay.addLayout(grid)
 
         # Volume
-        vol_row = QHBoxLayout()
-        vol_label = QLabel("🔊  Volume")
-        vol_label.setStyleSheet(f"color: {TEXT_SECONDARY}; font-size: 12px;")
-        vol_row.addWidget(vol_label)
-        vol_row.addStretch()
-        lay.addLayout(vol_row)
+        vol_lbl = QLabel("Volume")
+        vol_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; margin-top: 4px;")
+        lay.addWidget(vol_lbl)
+        self.volume_slider = _slider(66)
+        lay.addWidget(self.volume_slider)
 
-        vol = QSlider(Qt.Orientation.Horizontal)
-        vol.setRange(0, 100)
-        vol.setValue(62)
-        vol.setStyleSheet(f"""
-            QSlider::groove:horizontal {{
-                height: 4px;
-                background: rgba(255,255,255,0.12);
-                border-radius: 2px;
+        # Brightness
+        bri_lbl = QLabel("Brightness")
+        bri_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
+        lay.addWidget(bri_lbl)
+        self.brightness_slider = _slider(50)
+        lay.addWidget(self.brightness_slider)
+
+        back = QPushButton("←  Menu")
+        back.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        back.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                color: {TEXT_MUTED};
+                border: none;
+                font-size: 11px;
+                text-align: left;
+                margin-top: 4px;
             }}
-            QSlider::handle:horizontal {{
-                width: 14px;
-                height: 14px;
-                margin: -5px 0;
-                background: white;
-                border-radius: 7px;
-            }}
-            QSlider::sub-page:horizontal {{
-                background: {ACCENT};
-                border-radius: 2px;
-            }}
+            QPushButton:hover {{ color: {TEXT_SECONDARY}; }}
         """)
-        lay.addWidget(vol)
-
-        # Quick toggles
-        toggles = QHBoxLayout()
-        toggles.setSpacing(10)
-        for label, active in [("Wi-Fi", True), ("Bluetooth", False), ("Focus", False)]:
-            chip = QPushButton(label)
-            chip.setCheckable(True)
-            chip.setChecked(active)
-            chip.setFixedHeight(36)
-            chip.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            chip.setStyleSheet(f"""
-                QPushButton {{
-                    background: rgba(255,255,255,0.06);
-                    color: {TEXT_SECONDARY};
-                    border: 1px solid rgba(255,255,255,0.08);
-                    border-radius: 12px;
-                    padding: 0 14px;
-                    font-size: 12px;
-                    font-weight: 600;
-                }}
-                QPushButton:checked {{
-                    background: rgba(10, 132, 255, 0.25);
-                    color: {TEXT_PRIMARY};
-                    border: 1px solid rgba(10, 132, 255, 0.4);
-                }}
-                QPushButton:hover {{
-                    background: rgba(255,255,255,0.12);
-                }}
-            """)
-            toggles.addWidget(chip)
-        lay.addLayout(toggles)
-
-        # Battery / status
-        status = QLabel("🔋  78%  ·  Balanced")
-        status.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px; margin-top: 8px;")
-        lay.addWidget(status)
+        back.clicked.connect(lambda: self._apply_mode("menu"))
+        lay.addWidget(back)
         lay.addStretch()
         return w
 
-    def _make_close_btn(self) -> QPushButton:
-        btn = QPushButton("✕")
-        btn.setFixedSize(26, 26)
-        btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-        btn.setStyleSheet(f"""
-            QPushButton {{
-                background: rgba(255,255,255,0.08);
-                color: {TEXT_SECONDARY};
-                border: none;
-                border-radius: 13px;
-                font-size: 11px;
-                font-weight: 600;
-            }}
-            QPushButton:hover {{
-                background: rgba(255,255,255,0.18);
-                color: white;
-            }}
-            QPushButton:pressed {{
-                background: rgba(255,59,48,0.35);
-                color: white;
-            }}
-        """)
-        return btn
+    # ─── Interactions ──────────────────────────────────────────────────────────
 
-    # ─── State machine ─────────────────────────────────────────────────────────
+    def _update_toggle_status(self, btn: QPushButton, checked: bool):
+        status = btn.findChild(QLabel, "status")
+        if status:
+            status.setText("On" if checked else "Off")
 
-    def _go(self, mode: str):
-        if mode == self.mode:
-            return
-        self.mode = mode
-
-        # Hide all views first
-        for v in (self.compact_view, self.medium_view, self.music_view,
-                  self.search_view, self.system_view):
-            v.hide()
-
-        if mode == "compact":
-            target_w, target_h = COMPACT_W, COMPACT_H
-            self.compact_view.show()
-            radius = 18
-        elif mode == "medium":
-            target_w, target_h = MEDIUM_W, MEDIUM_H
-            self.medium_view.show()
-            radius = 20
+    def _on_search_text(self, text: str):
+        if text.strip():
+            self.search_hint.setText(f'Searching for "{text}"…')
         else:
-            target_w, target_h = EXPANDED_W, EXPANDED_H
-            if mode == "music":
-                self.music_view.show()
-            elif mode == "search":
-                self.search_view.show()
-            else:
-                self.system_view.show()
-            radius = 22
+            self.search_hint.setText("Start typing to search")
 
-        self.glass.setStyleSheet(f"""
-            #glass {{
-                background: {GLASS_BG};
-                border: 1px solid {GLASS_BORDER};
-                border-radius: {radius}px;
-            }}
-        """)
-
-        self._animate_to(target_w, target_h)
-
-    def _show_compact(self):
-        self.mode = "compact"
-        for v in (self.medium_view, self.music_view, self.search_view, self.system_view):
-            v.hide()
-        self.compact_view.show()
-        self.setFixedSize(COMPACT_W, COMPACT_H)
-
-    def collapse(self):
-        self._go("compact")
+    def _on_search(self):
+        query = self.search_input.text().strip()
+        if query:
+            self.search_hint.setText(f'Results for "{query}" (coming soon)')
 
     def _on_compact_click(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
-            self._go("medium")
+            self._apply_mode("menu")
 
-    # ─── Animation ─────────────────────────────────────────────────────────────
+    def collapse(self):
+        self._apply_mode("collapsed")
+
+    # ─── Mode / animation ──────────────────────────────────────────────────────
+
+    def _apply_mode(self, mode: str, animate: bool = True):
+        self.mode = mode
+
+        # Hide content panels
+        for p in (self.menu_panel, self.music_panel, self.search_panel, self.system_panel):
+            p.hide()
+
+        if mode == "collapsed":
+            self.expanded_shell.hide()
+            self.compact_view.show()
+            self._set_glass_radius(18)
+            target = (COMPACT_W, COMPACT_H)
+        else:
+            self.compact_view.hide()
+            self.expanded_shell.show()
+            self._set_glass_radius(28)
+
+            if mode == "menu":
+                self.menu_panel.show()
+            elif mode == "music":
+                self.music_panel.show()
+            elif mode == "search":
+                self.search_panel.show()
+                self.search_input.setFocus()
+            elif mode == "system":
+                self.system_panel.show()
+
+            target = (EXPANDED_W, EXPANDED_H)
+
+        if animate:
+            self._animate_to(*target)
+        else:
+            self.setFixedSize(*target)
+            self._recenter(target[0])
 
     def _animate_to(self, w: int, h: int):
-        if self._anim_group and self._anim_group.state() == QPropertyAnimation.State.Running:
-            self._anim_group.stop()
+        if self._anim and self._anim.state() == QPropertyAnimation.State.Running:
+            self._anim.stop()
 
         screen = self._screen_geo()
-        target_x = screen.x() + (screen.width() - w) // 2
-        target_y = self.y()  # keep vertical position
+        x = screen.x() + (screen.width() - w) // 2
+        y = self.y()
 
-        # Geometry animation on the window itself
         anim = QPropertyAnimation(self, b"geometry")
         anim.setDuration(ANIM_MS)
         anim.setStartValue(self.geometry())
-        anim.setEndValue(QRect(target_x, target_y, w, h))
+        anim.setEndValue(QRect(x, y, w, h))
         anim.setEasingCurve(QEasingCurve.Type.OutCubic)
 
-        # Soft scale-like feel: also force fixed size at end
-        def on_finished():
+        def done():
             self.setFixedSize(w, h)
 
-        anim.finished.connect(on_finished)
-        self._anim_group = anim
+        anim.finished.connect(done)
+        self._anim = anim
         anim.start()
 
-    # ─── Positioning & drag ────────────────────────────────────────────────────
+    def _recenter(self, w: int):
+        screen = self._screen_geo()
+        x = screen.x() + (screen.width() - w) // 2
+        self.move(x, self.y())
 
     def _screen_geo(self):
         if self.screen():
@@ -545,6 +634,8 @@ class IslandWindow(QWidget):
         x = screen.x() + (screen.width() - w) // 2
         y = screen.y() + 12
         self.setGeometry(x, y, w, h)
+
+    # ─── Drag + keyboard ───────────────────────────────────────────────────────
 
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -561,4 +652,7 @@ class IslandWindow(QWidget):
 
     def keyPressEvent(self, event):
         if event.key() == Qt.Key.Key_Escape:
-            self.collapse()
+            if self.mode in ("music", "search", "system"):
+                self._apply_mode("menu")
+            else:
+                self.collapse()
