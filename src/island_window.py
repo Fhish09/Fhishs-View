@@ -2,6 +2,7 @@
 Fhish's View — Premium Windows Dynamic Island overlay.
 Matches the React frontend structure: compact island → expanded panel
 with Menu / Music / Search / System content.
+System panel drives real Windows volume, brightness, and Settings.
 """
 
 from PyQt6.QtWidgets import (
@@ -9,9 +10,11 @@ from PyQt6.QtWidgets import (
     QGraphicsDropShadowEffect, QFrame, QSlider, QLineEdit, QGridLayout
 )
 from PyQt6.QtCore import (
-    Qt, QPropertyAnimation, QEasingCurve, QRect, QSize
+    Qt, QPropertyAnimation, QEasingCurve, QRect
 )
-from PyQt6.QtGui import QColor, QCursor, QFont
+from PyQt6.QtGui import QColor, QCursor
+
+from src import system_control as sysctl
 
 
 # Sizes aligned with frontend (App.tsx / Island.tsx)
@@ -21,10 +24,17 @@ ANIM_MS = 300
 
 GLASS_BG = "rgba(0, 0, 0, 0.85)"
 GLASS_BORDER = "rgba(255, 255, 255, 0.10)"
-ACCENT = "#0A84FF"
 TEXT_PRIMARY = "rgba(255, 255, 255, 0.90)"
 TEXT_SECONDARY = "rgba(255, 255, 255, 0.50)"
 TEXT_MUTED = "rgba(255, 255, 255, 0.30)"
+
+# Map UI labels → system_control keys
+TOGGLE_KEYS = {
+    "Wi-Fi": "wifi",
+    "Bluetooth": "bluetooth",
+    "Focus": "focus",
+    "Night Light": "night_light",
+}
 
 
 def _logo(size: int = 20, font_size: int = 10) -> QLabel:
@@ -71,23 +81,23 @@ def _slider(value: int = 50) -> QSlider:
     s = QSlider(Qt.Orientation.Horizontal)
     s.setRange(0, 100)
     s.setValue(value)
-    s.setStyleSheet(f"""
-        QSlider::groove:horizontal {{
+    s.setStyleSheet("""
+        QSlider::groove:horizontal {
             height: 6px;
             background: rgba(255,255,255,0.10);
             border-radius: 3px;
-        }}
-        QSlider::handle:horizontal {{
+        }
+        QSlider::handle:horizontal {
             width: 14px;
             height: 14px;
             margin: -4px 0;
             background: white;
             border-radius: 7px;
-        }}
-        QSlider::sub-page:horizontal {{
+        }
+        QSlider::sub-page:horizontal {
             background: rgba(255,255,255,0.50);
             border-radius: 3px;
-        }}
+        }
     """)
     return s
 
@@ -132,11 +142,9 @@ class IslandWindow(QWidget):
         self.glass_layout.setContentsMargins(0, 0, 0, 0)
         self.glass_layout.setSpacing(0)
 
-        # Compact island (Island.tsx)
         self.compact_view = self._build_compact()
         self.glass_layout.addWidget(self.compact_view)
 
-        # Expanded shell (ExpandedPanel.tsx) — shared header + content stack
         self.expanded_shell = QWidget()
         shell_lay = QVBoxLayout(self.expanded_shell)
         shell_lay.setContentsMargins(0, 0, 0, 0)
@@ -174,7 +182,6 @@ class IslandWindow(QWidget):
         """)
 
     def _build_compact(self) -> QWidget:
-        """Matches Island.tsx — F logo + title."""
         w = QWidget()
         lay = QHBoxLayout(w)
         lay.setContentsMargins(12, 0, 12, 0)
@@ -194,7 +201,6 @@ class IslandWindow(QWidget):
         return w
 
     def _build_header(self) -> QWidget:
-        """Matches ExpandedPanel header."""
         header = QWidget()
         header.setFixedHeight(48)
         lay = QHBoxLayout(header)
@@ -212,7 +218,6 @@ class IslandWindow(QWidget):
         close.clicked.connect(self.collapse)
         lay.addWidget(close)
 
-        # Bottom border
         line = QFrame()
         line.setFixedHeight(1)
         line.setStyleSheet("background: rgba(255,255,255,0.05);")
@@ -226,7 +231,6 @@ class IslandWindow(QWidget):
         return wrap
 
     def _build_menu_panel(self) -> QWidget:
-        """Matches MenuPanel.tsx."""
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -287,7 +291,6 @@ class IslandWindow(QWidget):
             btn.clicked.connect(lambda checked=False, m=mode: self._apply_mode(m))
             lay.addWidget(btn)
 
-        # Tagline
         tag = QLabel("Your Windows. Reimagined.")
         tag.setAlignment(Qt.AlignmentFlag.AlignCenter)
         tag.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; margin-top: 10px;")
@@ -296,13 +299,11 @@ class IslandWindow(QWidget):
         return w
 
     def _build_music_panel(self) -> QWidget:
-        """Matches MusicPanel.tsx."""
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(14)
 
-        # Artwork + meta
         row = QHBoxLayout()
         row.setSpacing(12)
 
@@ -328,16 +329,11 @@ class IslandWindow(QWidget):
         row.addLayout(meta)
         lay.addLayout(row)
 
-        # Progress bar (visual)
         progress = QFrame()
         progress.setFixedHeight(4)
-        progress.setStyleSheet("""
-            background: rgba(255,255,255,0.10);
-            border-radius: 2px;
-        """)
+        progress.setStyleSheet("background: rgba(255,255,255,0.10); border-radius: 2px;")
         lay.addWidget(progress)
 
-        # Controls
         controls = QHBoxLayout()
         controls.setSpacing(24)
         controls.addStretch()
@@ -374,7 +370,6 @@ class IslandWindow(QWidget):
         controls.addStretch()
         lay.addLayout(controls)
 
-        # Back to menu
         back = QPushButton("←  Menu")
         back.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
         back.setStyleSheet(f"""
@@ -393,7 +388,6 @@ class IslandWindow(QWidget):
         return w
 
     def _build_search_panel(self) -> QWidget:
-        """Matches SearchPanel.tsx — real editable input."""
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
@@ -443,78 +437,78 @@ class IslandWindow(QWidget):
         return w
 
     def _build_system_panel(self) -> QWidget:
-        """Matches SystemPanel.tsx — 2×2 toggles + volume + brightness."""
+        """2×2 settings buttons + live volume & brightness."""
         w = QWidget()
         lay = QVBoxLayout(w)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(10)
+
+        # Capability note
+        self.sys_status = QLabel("")
+        self.sys_status.setWordWrap(True)
+        self.sys_status.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px;")
+        lay.addWidget(self.sys_status)
 
         grid = QGridLayout()
         grid.setSpacing(8)
 
-        controls = [
-            ("Wi-Fi", True),
-            ("Bluetooth", False),
-            ("Focus", False),
-            ("Night Light", False),
-        ]
+        controls = ["Wi-Fi", "Bluetooth", "Focus", "Night Light"]
         self.toggle_btns = {}
-        for i, (label, active) in enumerate(controls):
+        for i, label in enumerate(controls):
             btn = QPushButton()
-            btn.setCheckable(True)
-            btn.setChecked(active)
             btn.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
-            btn.setFixedHeight(56)
+            btn.setFixedHeight(52)
             btn.setStyleSheet("""
                 QPushButton {
                     background: rgba(255,255,255,0.05);
                     border: 1px solid rgba(255,255,255,0.05);
-                    border-radius: 16px;
+                    border-radius: 14px;
                     text-align: left;
-                    padding: 8px 12px;
-                }
-                QPushButton:checked {
-                    background: rgba(59, 130, 246, 0.30);
-                    border: 1px solid rgba(96, 165, 250, 0.30);
+                    padding: 6px 12px;
                 }
                 QPushButton:hover {
-                    background: rgba(255,255,255,0.10);
+                    background: rgba(255,255,255,0.12);
+                    border: 1px solid rgba(96, 165, 250, 0.35);
                 }
-                QPushButton:checked:hover {
-                    background: rgba(59, 130, 246, 0.40);
+                QPushButton:pressed {
+                    background: rgba(59, 130, 246, 0.30);
                 }
             """)
 
-            # Label + status inside button
             inner = QVBoxLayout(btn)
             inner.setContentsMargins(4, 2, 4, 2)
-            inner.setSpacing(2)
+            inner.setSpacing(1)
             t1 = QLabel(label)
             t1.setStyleSheet(f"color: {TEXT_PRIMARY}; font-size: 13px; font-weight: 500; background: transparent;")
-            t2 = QLabel("On" if active else "Off")
+            t2 = QLabel("Open Settings")
             t2.setObjectName("status")
-            t2.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; background: transparent;")
+            t2.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 10px; background: transparent;")
             inner.addWidget(t1)
             inner.addWidget(t2)
 
-            btn.toggled.connect(lambda checked, b=btn: self._update_toggle_status(b, checked))
+            key = TOGGLE_KEYS[label]
+            btn.clicked.connect(lambda checked=False, k=key, b=btn: self._on_toggle_clicked(k, b))
             self.toggle_btns[label] = btn
             grid.addWidget(btn, i // 2, i % 2)
 
         lay.addLayout(grid)
 
-        # Volume
+        # Volume — real OS control
         vol_lbl = QLabel("Volume")
-        vol_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; margin-top: 4px;")
+        vol_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px; margin-top: 2px;")
         lay.addWidget(vol_lbl)
-        self.volume_slider = _slider(66)
+        vol_now = sysctl.get_volume()
+        self.volume_slider = _slider(vol_now if vol_now is not None else 50)
+        self.volume_slider.valueChanged.connect(self._on_volume_changed)
         lay.addWidget(self.volume_slider)
 
-        # Brightness
+        # Brightness — real OS control (laptops)
         bri_lbl = QLabel("Brightness")
         bri_lbl.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 11px;")
         lay.addWidget(bri_lbl)
-        self.brightness_slider = _slider(50)
+        bri_now = sysctl.get_brightness()
+        self.brightness_slider = _slider(bri_now if bri_now is not None else 50)
+        self.brightness_slider.valueChanged.connect(self._on_brightness_changed)
         lay.addWidget(self.brightness_slider)
 
         back = QPushButton("←  Menu")
@@ -526,21 +520,66 @@ class IslandWindow(QWidget):
                 border: none;
                 font-size: 11px;
                 text-align: left;
-                margin-top: 4px;
+                margin-top: 2px;
             }}
             QPushButton:hover {{ color: {TEXT_SECONDARY}; }}
         """)
         back.clicked.connect(lambda: self._apply_mode("menu"))
         lay.addWidget(back)
         lay.addStretch()
+
+        self._refresh_sys_status()
         return w
 
-    # ─── Interactions ──────────────────────────────────────────────────────────
+    # ─── Real system actions ───────────────────────────────────────────────────
 
-    def _update_toggle_status(self, btn: QPushButton, checked: bool):
+    def _refresh_sys_status(self):
+        caps = sysctl.capabilities()
+        parts = []
+        if caps["volume"]:
+            parts.append("Volume ✓")
+        else:
+            parts.append("Volume unavailable")
+        if caps["brightness"]:
+            parts.append("Brightness ✓")
+        else:
+            parts.append("Brightness N/A (external monitor?)")
+        parts.append("Toggles open Windows Settings")
+        self.sys_status.setText("  ·  ".join(parts))
+
+    def _sync_sliders_from_os(self):
+        """Pull current OS values when System panel opens."""
+        vol = sysctl.get_volume()
+        if vol is not None:
+            self.volume_slider.blockSignals(True)
+            self.volume_slider.setValue(vol)
+            self.volume_slider.blockSignals(False)
+
+        bri = sysctl.get_brightness()
+        if bri is not None:
+            self.brightness_slider.blockSignals(True)
+            self.brightness_slider.setValue(bri)
+            self.brightness_slider.blockSignals(False)
+
+        self._refresh_sys_status()
+
+    def _on_volume_changed(self, value: int):
+        ok = sysctl.set_volume(value)
+        if not ok:
+            self.sys_status.setText("Could not set volume — is audio device available?")
+
+    def _on_brightness_changed(self, value: int):
+        ok = sysctl.set_brightness(value)
+        if not ok:
+            self.sys_status.setText("Brightness not supported on this display")
+
+    def _on_toggle_clicked(self, key: str, btn: QPushButton):
+        ok = sysctl.open_setting(key)
         status = btn.findChild(QLabel, "status")
         if status:
-            status.setText("On" if checked else "Off")
+            status.setText("Opened Settings…" if ok else "Failed to open")
+
+    # ─── Search ────────────────────────────────────────────────────────────────
 
     def _on_search_text(self, text: str):
         if text.strip():
@@ -565,7 +604,6 @@ class IslandWindow(QWidget):
     def _apply_mode(self, mode: str, animate: bool = True):
         self.mode = mode
 
-        # Hide content panels
         for p in (self.menu_panel, self.music_panel, self.search_panel, self.system_panel):
             p.hide()
 
@@ -588,6 +626,7 @@ class IslandWindow(QWidget):
                 self.search_input.setFocus()
             elif mode == "system":
                 self.system_panel.show()
+                self._sync_sliders_from_os()
 
             target = (EXPANDED_W, EXPANDED_H)
 
